@@ -1,0 +1,16 @@
+name: build
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: unzip -q fpsboost-1.21.4-source.zip
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: 8.12 }
+      - run: gradle build
+        working-directory: fpsboost
+      - uses: actions/upload-artifact@v4
+        with: { name: fpsboost-jar, path: fpsboost/build/libs/*.jar }
