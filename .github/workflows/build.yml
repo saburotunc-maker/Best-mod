@@ -5,12 +5,149 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: unzip -q "fpsboost-1.21.4-source (1).zip"
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 21 }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: 8.12 }
-      - run: gradle build
-        working-directory: fpsboost
+      - name: Create mod project
+        run: |
+          mkdir -p modproject/src/main/java/com/fpsboost
+          mkdir -p modproject/src/main/resources/assets/fpsboost/lang
+          cd modproject
+
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+            repositories {
+              maven { name = 'Fabric'; url = 'https://maven.fabricmc.net/' }
+              mavenCentral()
+              gradlePluginPortal()
+            }
+          }
+          rootProject.name = 'fpsboost'
+          EOF
+
+          cat > build.gradle <<'EOF'
+          plugins {
+            id 'fabric-loom' version '1.9-SNAPSHOT'
+          }
+          version = '1.0.0'
+          base { archivesName = 'fpsboost' }
+          repositories { mavenCentral() }
+          dependencies {
+            minecraft "com.mojang:minecraft:1.21.4"
+            mappings "net.fabricmc:yarn:1.21.4+build.8:v2"
+            modImplementation "net.fabricmc:fabric-loader:0.16.10"
+            modImplementation "net.fabricmc.fabric-api:fabric-api:0.119.2+1.21.4"
+          }
+          tasks.withType(JavaCompile).configureEach { it.options.release = 21 }
+          java {
+            sourceCompatibility = JavaVersion.VERSION_21
+            targetCompatibility = JavaVersion.VERSION_21
+          }
+          EOF
+
+          cat > src/main/resources/fabric.mod.json <<'EOF'
+          {
+            "schemaVersion": 1,
+            "id": "fpsboost",
+            "version": "1.0.0",
+            "name": "FPS Boost",
+            "description": "Press K to toggle low-detail settings for more FPS.",
+            "environment": "client",
+            "entrypoints": {
+              "client": ["com.fpsboost.FpsBoostClient"]
+            },
+            "depends": {
+              "fabricloader": ">=0.16.0",
+              "minecraft": "1.21.4",
+              "java": ">=21",
+              "fabric-api": "*"
+            }
+          }
+          EOF
+
+          cat > src/main/resources/assets/fpsboost/lang/en_us.json <<'EOF'
+          {
+            "key.fpsboost.toggle": "Toggle FPS Boost",
+            "category.fpsboost": "FPS Boost"
+          }
+          EOF
+
+          cat > src/main/java/com/fpsboost/FpsBoostClient.java <<'EOF'
+          package com.fpsboost;
+
+          import net.fabricmc.api.ClientModInitializer;
+          import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+          import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+          import net.minecraft.client.MinecraftClient;
+          import net.minecraft.client.option.CloudRenderMode;
+          import net.minecraft.client.option.GameOptions;
+          import net.minecraft.client.option.GraphicsMode;
+          import net.minecraft.client.option.KeyBinding;
+          import net.minecraft.client.util.InputUtil;
+          import net.minecraft.particle.ParticlesMode;
+          import net.minecraft.text.Text;
+          import org.lwjgl.glfw.GLFW;
+
+          public class FpsBoostClient implements ClientModInitializer {
+            private static KeyBinding toggleKey;
+            private boolean enabled = false;
+            private int oldView;
+            private int oldSim;
+            private ParticlesMode oldParticles;
+            private GraphicsMode oldGraphics;
+            private CloudRenderMode oldClouds;
+            private boolean oldShadows;
+
+            @Override
+            public void onInitializeClient() {
+              toggleKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                  "key.fpsboost.toggle", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_K, "category.fpsboost"));
+              ClientTickEvents.END_CLIENT_TICK.register(client -> {
+                while (toggleKey.wasPressed()) {
+                  toggle(client);
+                }
+              });
+            }
+
+            private void toggle(MinecraftClient client) {
+              GameOptions o = client.options;
+              if (!enabled) {
+                oldView = o.getViewDistance().getValue();
+                oldSim = o.getSimulationDistance().getValue();
+                oldParticles = o.getParticles().getValue();
+                oldGraphics = o.getGraphicsMode().getValue();
+                oldClouds = o.getCloudRenderMode().getValue();
+                oldShadows = o.getEntityShadows().getValue();
+
+                o.getViewDistance().setValue(6);
+                o.getSimulationDistance().setValue(5);
+                o.getParticles().setValue(ParticlesMode.MINIMAL);
+                o.getGraphicsMode().setValue(GraphicsMode.FAST);
+                o.getCloudRenderMode().setValue(CloudRenderMode.OFF);
+                o.getEntityShadows().setValue(false);
+                enabled = true;
+              } else {
+                o.getViewDistance().setValue(oldView);
+                o.getSimulationDistance().setValue(oldSim);
+                o.getParticles().setValue(oldParticles);
+                o.getGraphicsMode().setValue(oldGraphics);
+                o.getCloudRenderMode().setValue(oldClouds);
+                o.getEntityShadows().setValue(oldShadows);
+                enabled = false;
+              }
+              if (client.player != null) {
+                client.player.sendMessage(Text.literal("FPS Boost: " + (enabled ? "ON" : "OFF")), true);
+              }
+            }
+          }
+          EOF
+      - name: Build
+        run: gradle build
+        working-directory: modproject
       - uses: actions/upload-artifact@v4
-        with: { name: fpsboost-jar, path: fpsboost/build/libs/*.jar }
+        with:
+          name: fpsboost-jar
+          path: |
+            modproject/build/libs/*.jar
+            !modproject/build/libs/*-dev.jar
